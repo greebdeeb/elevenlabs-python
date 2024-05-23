@@ -10,3 +10,8 @@
 	
 - run script
 	python generate_voice.py
+
+
+TODO:
+- update readme
+- add requirements.txt
