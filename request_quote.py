@@ -9,10 +9,9 @@ import requests
 import re
 import yaml
 
-# as per recommendation from @freylis, compile regex once only
+# compile regex once only
 CLEANR = re.compile('<.*?>') 
 
-# TODO: create a template config *.yaml file as to not reveal the secret API key
 
 #### Helper functions
 
@@ -53,7 +52,7 @@ def fetch_bible_verses(num_verses):
 		key = get_bible_filename(bible_verse_name)
 		
 		# Add the bible verse to the data dictionary
-		data[key] = [ bible_verse_name, bible_verse_text ]
+		data[key] = [ bible_verse_name.replace(':', ', '), bible_verse_text ]
 		
 	return data
 
@@ -90,7 +89,9 @@ def generate_commentary(data):
 		
 	return data
 
-# TODO: add documentation here
+# Use ElevenLabs remote API to generate audio files for the bible verse
+# input   (dictionary)  :  { verse1_name : [ verse1_text, verse1_commentary ] , verse2_name : [ verse2_text, verse2_commentary ] , ...}
+# output  (audio file)  :  writes audio files to the local filesystem
 def generate_audio(data, config):
 	# create the elevenlabs client object
 	client = ElevenLabs(
@@ -115,7 +116,7 @@ def generate_audio(data, config):
 def main():
 	parser = argparse.ArgumentParser(description='Description of your program')
 	parser.add_argument('-n', '--num-verses', type=int, help="Specify the number of bible verses to query.", required=False, default=1)
-	parser.add_argument('-s', '--suffix', type=int, help='Specify a suffix for the output files.', required=False, default='0')
+	parser.add_argument('-o', '--output-suffix', type=int, help='Specify a suffix for the output files to prevent overwriting.', required=False, default='0')
 	parser.add_argument('-c', '--config', type=str, help='Specify a configuration file for environment variables.', required=False, default='config.yaml')
 	group = parser.add_mutually_exclusive_group()
 	group.add_argument('-l', '--load', type=str, help="Load from a config file with pre-generated bible verses.")
@@ -132,7 +133,15 @@ def main():
 	makedirs(config_data['output_audio_dir'], exist_ok=True)
 	
 	data = {}
-	if not args.load:
+	if args.load:
+		# Load bible verses from a save file
+		with open(args.load, 'r', encoding='utf-8') as fp:
+			data = yaml.safe_load(fp)
+		
+		# Read the bible verse using ElevenLabs API
+		generate_audio(data, config_data)
+		
+	else:
 		# Request a number of bible verses and write them to the output file
 		data = fetch_bible_verses(args.num_verses)
 		
@@ -140,15 +149,12 @@ def main():
 		data = generate_commentary(data)
 		
 		# Save the data in a YAML file
-		with open(join(config_data['output_text_dir'], 'bible_verses_' + str(args.suffix) + '.yaml'), 'w', encoding='utf-8') as fp:
+		with open(join(config_data['output_text_dir'], 'bible_verses_' + str(args.output_suffix) + '.yaml'), 'w', encoding='utf-8') as fp:
 			yaml.dump(data, fp)
-	else:
-		with open(args.load, 'r', encoding='utf-8') as fp:
-			data = yaml.safe_load(fp)
 		
-	# Read the bible verse using ElevenLabs API
-	if not args.text_only:
-		generate_audio(data, config_data)
+		# Read the bible verse using ElevenLabs API
+		if not args.text_only:
+			generate_audio(data, config_data)
 
 
 if __name__ == '__main__':
