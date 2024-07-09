@@ -5,12 +5,12 @@ from openai import OpenAI
 from elevenlabs.client import ElevenLabs
 from elevenlabs import save
 from moviepy.editor import AudioFileClip, VideoFileClip, concatenate_videoclips
+from moviepy.audio.fx.all import audio_fadeout
 from random import choice
 import argparse
 import requests
 import re
 import yaml
-from moviepy.audio.fx.all import audio_fadeout
 
 # compile regex once only
 CLEANR = re.compile('<.*?>') 
@@ -171,7 +171,7 @@ def generate_video(data, config):
 			looped_video = (
 				looped_video
 				.subclip(0, (audioclip.duration)) # Trim video length to match audio
-				.set_audio(audioclip) # Add the voiceover to the video
+				.set_audio(audio_fadeout(audioclip, 1.0)) # Add the voiceover to the video
 			)
 		
 			# Save the video
