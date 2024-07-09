@@ -1,16 +1,27 @@
-from os.path import exists, join
-from os import makedirs
+from os.path import exists, join, isfile
+from os import makedirs, listdir
 from bs4 import BeautifulSoup
 from openai import OpenAI
 from elevenlabs.client import ElevenLabs
 from elevenlabs import save
+from moviepy.editor import AudioFileClip, VideoFileClip, concatenate_videoclips
+from random import choice
 import argparse
 import requests
 import re
 import yaml
+from moviepy.audio.fx.all import audio_fadeout
 
 # compile regex once only
 CLEANR = re.compile('<.*?>') 
+
+# map numbers to words (ex. First, Second, ...)
+number_dict = {
+	'1' : 'First ',
+	'2' : 'Second ',
+	'3' : 'Third ',
+	'4' : 'Fourth ',
+}
 
 
 #### Helper functions
@@ -22,6 +33,14 @@ def cleanhtml(raw_html):
 def get_bible_filename(bible_verse_name):
 	bible_verse_name = bible_verse_name.replace(' ', '_')
 	bible_verse_name = bible_verse_name.replace(':', '.')
+	return bible_verse_name
+
+def get_bible_name(bible_verse_name):
+	# change leading numbers to words (ex. First Corinthians)
+	first_two_chars = bible_verse_name[:2]
+	if first_two_chars in number_dict:
+		bible_verse_name = number_dict[first_two_chars] + bible_verse_name[2:]
+	bible_verse_name = bible_verse_name.replace(':', ', ')
 	return bible_verse_name
 
 def print_format_error():
@@ -52,7 +71,7 @@ def fetch_bible_verses(num_verses):
 		key = get_bible_filename(bible_verse_name)
 		
 		# Add the bible verse to the data dictionary
-		data[key] = [ bible_verse_name.replace(':', ', '), bible_verse_text ]
+		data[key] = [ get_bible_name(bible_verse_name), bible_verse_text ]
 		
 	return data
 
@@ -111,8 +130,54 @@ def generate_audio(data, config):
 		
 		# save the audio to the output folder
 		save(audio, join(config['output_audio_dir'], key + '.wav'))
-	
 
+# Select a random input video from the video resource path
+# input   (string)  :  specify the path to video resources
+# output  (string)  :  path to a randomly selected video
+def select_random_video(video_resource_path):
+	# list all the videos in the resource directory
+	video_files = listdir(video_resource_path)
+	
+	# remove directories from the list
+	for filename in video_files:
+		if not isfile(join(video_resource_path, filename)):
+			video_files.remove(filename)
+	
+	# select a random video
+	if video_files:
+		return join(video_resource_path, choice(video_files))
+	else:
+		return None
+
+# Create a video for each generated audio by combining it with a random video
+# input   (dictionary)  :  { verse1_name : [ verse1_text, verse1_commentary ] , verse2_name : [ verse2_text, verse2_commentary ] , ...}
+# output  (video file)  :  writes a video file to the local file system
+def generate_video(data, config):
+	for key in data.keys():
+		# Locate the generated audio
+		local_audio_path = join(config['output_audio_dir'], key + '.wav')
+		
+		# Select the resource video
+		local_video_path = select_random_video(config['input_video_dir'])
+		
+		# Open the audio and video clip
+		with AudioFileClip(local_audio_path) as audioclip, VideoFileClip(local_video_path) as videoclip:
+		
+			# Loop the video clip to match the voiceover length
+			num_loops = int(audioclip.duration / videoclip.duration) + 1
+			looped_video = concatenate_videoclips([videoclip] * num_loops)
+			
+			# Generate the final video
+			looped_video = (
+				looped_video
+				.subclip(0, (audioclip.duration)) # Trim video length to match audio
+				.set_audio(audioclip) # Add the voiceover to the video
+			)
+		
+			# Save the video
+			output_video_path = join(config['output_video_dir'], key + '.mp4')
+			looped_video.write_videofile(output_video_path)
+		
 def main():
 	parser = argparse.ArgumentParser(description='Description of your program')
 	parser.add_argument('-n', '--num-verses', type=int, help="Specify the number of bible verses to query.", required=False, default=1)
@@ -131,16 +196,14 @@ def main():
 	# Make the output directories
 	makedirs(config_data['output_text_dir'], exist_ok=True)
 	makedirs(config_data['output_audio_dir'], exist_ok=True)
+	makedirs(config_data['output_video_dir'], exist_ok=True)
+	makedirs(config_data['input_video_dir'], exist_ok=True)
 	
 	data = {}
 	if args.load:
 		# Load bible verses from a save file
 		with open(args.load, 'r', encoding='utf-8') as fp:
 			data = yaml.safe_load(fp)
-		
-		# Read the bible verse using ElevenLabs API
-		generate_audio(data, config_data)
-		
 	else:
 		# Request a number of bible verses and write them to the output file
 		data = fetch_bible_verses(args.num_verses)
@@ -151,10 +214,14 @@ def main():
 		# Save the data in a YAML file
 		with open(join(config_data['output_text_dir'], 'bible_verses_' + str(args.output_suffix) + '.yaml'), 'w', encoding='utf-8') as fp:
 			yaml.dump(data, fp)
-		
-		# Read the bible verse using ElevenLabs API
-		if not args.text_only:
-			generate_audio(data, config_data)
+	
+	# Read the bible verse using ElevenLabs API
+	if not args.text_only:
+		generate_audio(data, config_data)
+	
+		# Combine generated audio and random stock video
+		if exists(config_data['input_video_dir']):
+			generate_video(data, config_data)
 
 
 if __name__ == '__main__':
