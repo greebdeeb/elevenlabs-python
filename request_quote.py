@@ -5,6 +5,7 @@ from openai import OpenAI
 from elevenlabs.client import ElevenLabs
 from elevenlabs import save
 from moviepy.editor import AudioFileClip, VideoFileClip, concatenate_videoclips
+import subprocess
 from moviepy.audio.fx.all import audio_fadeout
 from random import choice
 import argparse
@@ -160,24 +161,30 @@ def generate_video(data, config):
 		# Select the resource video
 		local_video_path = select_random_video(config['input_video_dir'])
 		
-		# Open the audio and video clip
-		with AudioFileClip(local_audio_path) as audioclip, VideoFileClip(local_video_path) as videoclip:
+		# Select an output path
+		output_video_path = join(config['output_video_dir'], key + '.mp4')
 		
-			# Loop the video clip to match the voiceover length
-			num_loops = int(audioclip.duration / videoclip.duration) + 1
-			looped_video = concatenate_videoclips([videoclip] * num_loops)
-			
-			# Generate the final video
-			looped_video = (
-				looped_video
-				.subclip(0, (audioclip.duration)) # Trim video length to match audio
-				.set_audio(audio_fadeout(audioclip, 1.0)) # Add the voiceover to the video
-			)
+		ffmpeg_command = [
+			'ffmpeg',
+			'-stream_loop', 
+			'-1',
+			'-i',
+			local_video_path,
+			'-i',
+			local_audio_path,
+			'-map',
+			'0:v', 
+			'-map', 
+			'1:a', 
+			'-c:v', 
+			'copy', 
+			'-shortest', 
+			output_video_path
+		]
 		
-			# Save the video
-			output_video_path = join(config['output_video_dir'], key + '.mp4')
-			looped_video.write_videofile(output_video_path)
-		
+		subprocess.run(ffmpeg_command)
+	
+	
 def main():
 	parser = argparse.ArgumentParser(description='Description of your program')
 	parser.add_argument('-n', '--num-verses', type=int, help="Specify the number of bible verses to query.", required=False, default=1)
@@ -223,6 +230,12 @@ def main():
 		if exists(config_data['input_video_dir']):
 			generate_video(data, config_data)
 
+			
+			
+			
+	#TODO: update the config file
+	#TODO: resume create video from audio
+	
 
 if __name__ == '__main__':
 	main()
