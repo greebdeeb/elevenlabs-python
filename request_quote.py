@@ -4,7 +4,6 @@ from bs4 import BeautifulSoup
 from openai import OpenAI
 from elevenlabs.client import ElevenLabs
 from elevenlabs import save
-from moviepy.editor import AudioFileClip, VideoFileClip, concatenate_videoclips
 import subprocess
 from moviepy.audio.fx.all import audio_fadeout
 from random import choice
@@ -112,7 +111,10 @@ def generate_commentary(data):
 # Use ElevenLabs remote API to generate audio files for the bible verse
 # input   (dictionary)  :  { verse1_name : [ verse1_text, verse1_commentary ] , verse2_name : [ verse2_text, verse2_commentary ] , ...}
 # output  (audio file)  :  writes audio files to the local filesystem
-def generate_audio(data, config):
+def generate_audio(data, config, output_root):
+	audio_dir = join(config['output_audio_dir'], output_root)
+	makedirs(audio_dir, exist_ok=True)
+	
 	# create the elevenlabs client object
 	client = ElevenLabs(
 		api_key = config['elevenlabs_api_key'], # Defaults to ELEVEN_API_KEY
@@ -130,7 +132,7 @@ def generate_audio(data, config):
 		)
 		
 		# save the audio to the output folder
-		save(audio, join(config['output_audio_dir'], key + '.wav'))
+		save(audio, join(audio_dir, key + '.wav'))
 
 # Select a random input video from the video resource path
 # input   (string)  :  specify the path to video resources
@@ -153,16 +155,20 @@ def select_random_video(video_resource_path):
 # Create a video for each generated audio by combining it with a random video
 # input   (dictionary)  :  { verse1_name : [ verse1_text, verse1_commentary ] , verse2_name : [ verse2_text, verse2_commentary ] , ...}
 # output  (video file)  :  writes a video file to the local file system
-def generate_video(data, config):
+def generate_video(data, config, output_root):
+	audio_dir = join(config['output_audio_dir'], output_root)
+	video_dir = join(config['output_video_dir'], output_root)
+	makedirs(video_dir, exist_ok=True)
+	
 	for key in data.keys():
 		# Locate the generated audio
-		local_audio_path = join(config['output_audio_dir'], key + '.wav')
+		local_audio_path = join(audio_dir, key + '.wav')
 		
 		# Select the resource video
 		local_video_path = select_random_video(config['input_video_dir'])
 		
 		# Select an output path
-		output_video_path = join(config['output_video_dir'], key + '.mp4')
+		output_video_path = join(video_dir, key + '.mp4')
 		
 		ffmpeg_command = [
 			'ffmpeg',
@@ -186,13 +192,14 @@ def generate_video(data, config):
 	
 	
 def main():
-	parser = argparse.ArgumentParser(description='Description of your program')
+	parser = argparse.ArgumentParser(description='Generate bible verse videos with commentary.')
 	parser.add_argument('-n', '--num-verses', type=int, help="Specify the number of bible verses to query.", required=False, default=1)
-	parser.add_argument('-o', '--output-suffix', type=int, help='Specify a suffix for the output files to prevent overwriting.', required=False, default='0')
+	parser.add_argument('-o', '--output', type=str, help='Specify a name to organize the output files.', required=False, default='bible-verses')
 	parser.add_argument('-c', '--config', type=str, help='Specify a configuration file for environment variables.', required=False, default='config.yaml')
 	group = parser.add_mutually_exclusive_group()
 	group.add_argument('-l', '--load', type=str, help="Load from a config file with pre-generated bible verses.")
 	group.add_argument('-t', '--text-only', action='store_true', help="Text generation only, does not generate any text to speech audio.")
+	group.add_argument('-v', '--video-only', type=str, help="Create videos using the generated audio files listed in a config file.")
 	args = parser.parse_args()
 	
 	# Load environment from config.yaml
@@ -207,10 +214,12 @@ def main():
 	makedirs(config_data['input_video_dir'], exist_ok=True)
 	
 	data = {}
-	if args.load:
+	if args.load or args.video_only:
 		# Load bible verses from a save file
-		with open(args.load, 'r', encoding='utf-8') as fp:
+		in_file = args.load if args.load else args.video_only
+		with open(in_file, 'r', encoding='utf-8') as fp:
 			data = yaml.safe_load(fp)
+		
 	else:
 		# Request a number of bible verses and write them to the output file
 		data = fetch_bible_verses(args.num_verses)
@@ -219,23 +228,18 @@ def main():
 		data = generate_commentary(data)
 		
 		# Save the data in a YAML file
-		with open(join(config_data['output_text_dir'], 'bible_verses_' + str(args.output_suffix) + '.yaml'), 'w', encoding='utf-8') as fp:
+		with open(join(config_data['output_text_dir'], args.output  + '.yaml'), 'w', encoding='utf-8') as fp:
 			yaml.dump(data, fp)
 	
 	# Read the bible verse using ElevenLabs API
-	if not args.text_only:
-		generate_audio(data, config_data)
+	if (not args.text_only) and (not args.video_only):
+		generate_audio(data, config_data, args.output)
 	
+	if (not args.text_only):
 		# Combine generated audio and random stock video
 		if exists(config_data['input_video_dir']):
-			generate_video(data, config_data)
+			generate_video(data, config_data, args.output)
 
-			
-			
-			
-	#TODO: update the config file
-	#TODO: resume create video from audio
-	
 
 if __name__ == '__main__':
 	main()
